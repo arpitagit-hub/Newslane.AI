@@ -1,11 +1,17 @@
+import os
 import streamlit as st
 from openai import OpenAI
+from dotenv import load_dotenv
 import datetime
+import requests
+
+load_dotenv()
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="StreamNewsAI", layout="wide")
 
-client = OpenAI(api_key="sk-xxxxxxxxxxxx")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 
 # ---------------- SESSION ----------------
 if "logged_in" not in st.session_state:
@@ -14,17 +20,25 @@ if "logged_in" not in st.session_state:
 if "page" not in st.session_state:
     st.session_state.page = "home"
 
-if "selected_news" not in st.session_state:
-    st.session_state.selected_news = None
+if "selected_channel" not in st.session_state:
+    st.session_state.selected_channel = None
+
+# 🔥 NEW USER SESSION
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+if "favorites" not in st.session_state:
+    st.session_state.favorites = []
 
 # ---------------- CSS ----------------
 st.markdown("""
 <style>
 .card {
     background-color: #1c1f26;
-    padding: 15px;
+    padding: 20px;
     border-radius: 12px;
-    margin-bottom: 15px;
+    text-align: center;
+    margin-bottom: 10px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -38,25 +52,22 @@ with col1:
 with col2:
     nav1, nav2, nav3, nav4 = st.columns(4)
 
-    with nav1:
-        if st.button("Home"):
-            st.session_state.page = "home"
+    if nav1.button("Home"):
+        st.session_state.page = "home"
 
-    with nav2:
-        if st.button("Sources"):
-            st.session_state.page = "sources"
+    if nav2.button("Sources"):
+        st.session_state.page = "sources"
 
-    with nav3:
-        if st.button("About"):
-            st.session_state.page = "about"
+    if nav3.button("About"):
+        st.session_state.page = "about"
 
-    with nav4:
-        if st.session_state.logged_in:
-            if st.button("Logout"):
-                st.session_state.logged_in = False
-        else:
-            if st.button("Login"):
-                st.session_state.logged_in = True
+    if st.session_state.logged_in:
+        if nav4.button("Logout"):
+            st.session_state.logged_in = False
+            st.session_state.user = None
+    else:
+        if nav4.button("Login"):
+            st.session_state.page = "login"
 
 st.markdown("---")
 
@@ -69,78 +80,171 @@ with st.sidebar:
         ["📊 Dashboard", "📰 Current News", "🤖 AI Query"]
     )
 
+    # 🔥 PROFILE SECTION
+    if st.session_state.logged_in and st.session_state.user:
+        st.markdown("## 👤 Profile")
+        user = st.session_state.user
+        st.write(f"Name: {user['name']}")
+        st.write(f"Email: {user['email']}")
+        st.write(f"Password: {user['password']}")
+
+        st.markdown("### ⭐ Favorites")
+        for fav in st.session_state.favorites:
+            st.write(f"✔ {fav}")
+
+# ---------------- LOGIN PAGE ----------------
+if st.session_state.page == "login":
+
+    st.markdown("## 🔐 Login")
+
+    name = st.text_input("Name")
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login Now"):
+        if name and email and password:
+            st.session_state.user = {
+                "name": name,
+                "email": email,
+                "password": password
+            }
+            st.session_state.logged_in = True
+            st.success("Logged in successfully ✅")
+            st.session_state.page = "home"
+        else:
+            st.error("Please fill all fields")
+
 # ---------------- HOME ----------------
-if st.session_state.page == "home":
+elif st.session_state.page == "home":
 
-    st.markdown("### 🔍 Filter News")
+    st.markdown("## 📰 News Channels")
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        source = st.selectbox(
-            "Select Source",
-            ["All", "TV9 Bangla", "ABP News", "Anandabazar"]
-        )
-
-    with col2:
-        date = st.date_input("Select Date", datetime.date.today())
-
-    st.markdown("---")
-    st.markdown("## 📰 Latest News")
-
-    news_list = [
-        {"title": "Kolkata Weather Update", "source": "TV9 Bangla", "desc": "Heavy rain expected."},
-        {"title": "Election Update", "source": "ABP News", "desc": "New updates in WB politics."},
-        {"title": "Stock Market", "source": "Anandabazar", "desc": "Market rising today."},
+    channels = [
+        "TV9 Bangla",
+        "ABP Ananda",
+        "Anandabazar",
+        "Zee 24 Ghanta",
+        "Kolkata News"
     ]
 
     cols = st.columns(3)
 
-    for i, news in enumerate(news_list):
+    for i, ch in enumerate(channels):
         with cols[i % 3]:
+
             st.markdown(f"""
             <div class="card">
-                <h4>{news['title']}</h4>
-                <p><b>{news['source']}</b></p>
-                <p>{news['desc']}</p>
+                <h4>{ch}</h4>
             </div>
             """, unsafe_allow_html=True)
 
-            if st.button(f"Open News {i}"):
-                st.session_state.selected_news = news
+            if st.button(f"Get News from {ch}"):
+                st.session_state.selected_channel = ch
 
-    # ---------------- NEWS DETAIL ----------------
-    if st.session_state.selected_news:
+            # ⭐ FAVORITE BUTTON
+            if st.button(f"⭐ {ch}"):
+                if ch not in st.session_state.favorites:
+                    st.session_state.favorites.append(ch)
 
-        news = st.session_state.selected_news
+    # 🔒 DATE ACCESS CONTROL
+    if not st.session_state.logged_in:
+        st.info("Login to access previous news")
+        selected_date = datetime.date.today()
+    else:
+        selected_date = st.date_input("Select Date", datetime.date.today())
 
-        st.markdown("---")
-        st.markdown("## 📰 News Details")
+    channel_query_map = {
+        "TV9 Bangla": "Kolkata weather OR West Bengal news",
+        "ABP Ananda": "West Bengal politics OR Kolkata news",
+        "Anandabazar": "West Bengal news",
+        "Zee 24 Ghanta": "India news OR Kolkata",
+        "Kolkata News": "Kolkata latest news"
+    }
 
-        st.markdown(f"### {news['title']}")
-        st.write(f"📌 Source: {news['source']}")
-        st.write(news['desc'])
+    if st.session_state.selected_channel:
 
-        # 🔍 Previous News
-        st.markdown("### 📅 See Previous News")
+        channel = st.session_state.selected_channel
 
-        selected_date = st.date_input("Select Date for previous news")
+        st.markdown(f"## 📰 News from {channel}")
 
-        if st.button("Load Previous News"):
-            st.info(f"Showing news for {selected_date}")
+        query = channel_query_map.get(channel, "Kolkata news")
 
-        # 🤖 Summarize
-        if st.button("Summarize News"):
+        url = "https://newsapi.org/v2/everything"
 
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{
-                    "role": "user",
-                    "content": f"Summarize this news: {news['desc']}"
-                }]
-            )
+        params = {
+            "q": query,
+            "from": str(datetime.date.today() - datetime.timedelta(days=1)),
+            "sortBy": "publishedAt",
+            "language": "en",
+            "apiKey": NEWS_API_KEY
+        }
 
-            st.success(response.choices[0].message.content)
+        response = requests.get(url, params=params)
+        data = response.json()
+
+        if "articles" in data and len(data["articles"]) > 0:
+
+            article = data["articles"][0]
+
+            st.markdown(f"### {article['title']}")
+            st.write(article.get("description", ""))
+
+            content = article.get("content", "No content available")
+
+            expand_prompt = f"""
+            Expand this into a detailed news report (500-1000 words):
+
+            {content}
+            """
+
+            try:
+                expanded = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": expand_prompt}]
+                )
+                full_report = expanded.choices[0].message.content
+            except Exception:
+                full_report = content
+                st.warning("⚠️ Showing basic report (AI limit reached)")
+
+            st.write(full_report)
+
+            # 🔒 SUMMARY ACCESS CONTROL
+            if not st.session_state.logged_in:
+                st.warning("🔒 Login to use AI summarization")
+            else:
+                st.markdown("### 🧠 Choose Summary Type")
+
+            mode = st.selectbox("Select Summary Type", [
+                "Brief Summary",
+                "Short Summary",
+                "Deep Summary",
+                "60 Sec Summary"
+            ])
+
+            if st.button("Summarize"):
+
+                if mode == "Brief Summary":
+                    prompt = f"Summarize in 2 lines:\n{full_report}"
+                elif mode == "Short Summary":
+                    prompt = f"Summarize in 5 lines:\n{full_report}"
+                elif mode == "Deep Summary":
+                    prompt = f"Give detailed summary:\n{full_report}"
+                else:
+                    prompt = f"Explain like 60-second speech:\n{full_report}"
+
+                try:
+                    summary = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": prompt}]
+                )
+                    st.success(summary.choices[0].message.content)
+
+                except Exception:
+                    st.warning("⚠️ AI limit reached → Showing basic summary")
+
+            # 👇 THIS IS NEW
+                    st.write(full_report[:300] + "...")
 
 # ---------------- SOURCES ----------------
 elif st.session_state.page == "sources":
@@ -161,10 +265,6 @@ elif st.session_state.page == "about":
 
     AI-powered news platform that:
     - Summarizes news
-    - Filters by source & date
-    - Provides AI insights
-
-    🚀 Built by Arpita
     """)
 
 # ---------------- SIDEBAR FEATURES ----------------
